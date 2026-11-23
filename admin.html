@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#8d6aa7">
+<title>لوحة إدارة المكتبة الرقمية</title>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{--p:#8d6aa7;--p-dark:#6d4a88;--pink:#e8a0bf;--rose:#fbeaf3;--lav:#f3ecf9;--text:#3d2b4a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Tajawal',sans-serif;background:var(--rose);color:var(--text);min-height:100vh}
+  header{background:linear-gradient(135deg,#8d6aa7,#e8a0bf);color:#fff;padding:22px 16px;text-align:center}
+  header h1{font-size:24px}
+  header a{color:#fff;font-size:14px;opacity:.9}
+  .wrap{max-width:820px;margin:24px auto;padding:0 14px}
+  .card{background:#fff;border-radius:22px;padding:22px;box-shadow:0 6px 20px rgba(141,106,167,.15);margin-bottom:22px}
+  .card h2{color:var(--p-dark);margin-bottom:14px;font-size:20px}
+  label{display:block;margin:12px 0 5px;font-weight:700;font-size:15px}
+  input,select{width:100%;padding:12px 14px;border:2px solid var(--lav);border-radius:14px;font:inherit;outline:none;background:#fff}
+  input:focus,select:focus{border-color:var(--pink)}
+  .btn{margin-top:16px;width:100%;padding:13px;border:none;border-radius:16px;background:linear-gradient(135deg,var(--p),#c58bb8);color:#fff;font:inherit;font-weight:800;font-size:16px;cursor:pointer}
+  .btn:disabled{opacity:.6}
+  .msg{margin-top:12px;font-weight:700;text-align:center}
+  .ok{color:#2e8b57}.err{color:#c0392b}
+  .or{text-align:center;margin:10px 0 -4px;opacity:.6;font-size:14px}
+  .row{display:flex;align-items:center;gap:10px;padding:12px;border-radius:14px;background:var(--lav);margin-bottom:10px}
+  .row div{flex:1}.row small{opacity:.7;display:block}
+  .del{background:#fff;border:2px solid var(--pink);color:#c0392b;border-radius:12px;padding:7px 14px;font:inherit;cursor:pointer;font-weight:700}
+  .bar{height:10px;background:var(--lav);border-radius:10px;overflow:hidden;margin-top:12px;display:none}
+  .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--p),var(--pink));transition:.2s}
+  .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .out{background:none;border:none;color:var(--p-dark);cursor:pointer;font:inherit;text-decoration:underline}
+  .hide{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔐 لوحة إدارة المكتبة الرقمية</h1>
+  <a href="index.html">← العودة للمكتبة</a>
+</header>
+
+<div class="wrap">
+
+  <!-- تسجيل الدخول -->
+  <div class="card" id="loginBox">
+    <h2>تسجيل دخول الإدارة</h2>
+    <label>البريد الإلكتروني</label><input id="email" type="email" dir="ltr">
+    <label>كلمة المرور</label><input id="pass" type="password" dir="ltr">
+    <button class="btn" id="loginBtn">دخول</button>
+    <div class="msg err" id="loginMsg"></div>
+  </div>
+
+  <!-- لوحة التحكم -->
+  <div id="panel" class="hide">
+    <div class="card">
+      <div class="top"><h2>➕ إضافة كتاب جديد</h2><button class="out" id="logout">تسجيل خروج</button></div>
+      <label>عنوان الكتاب</label><input id="title">
+      <label>اسم المؤلف</label><input id="author">
+      <label>القسم</label>
+      <select id="section">
+        <option value="stories">قسم القصص والروايات</option>
+        <option value="science">قسم المراجع العلمية</option>
+        <option value="edu">قسم المصادر التعليمية</option>
+        <option value="culture">قسم الثقافة العامة</option>
+      </select>
+      <label>ملف الكتاب (PDF)</label><input id="file" type="file" accept="application/pdf">
+      <div class="or">— أو —</div>
+      <label>رابط PDF (مثلاً رابط مشاركة Google Drive)</label><input id="link" dir="ltr" placeholder="https://drive.google.com/file/d/...">
+      <div class="bar" id="bar"><i id="barI"></i></div>
+      <button class="btn" id="addBtn">رفع الكتاب</button>
+      <div class="msg" id="msg"></div>
+    </div>
+
+    <div class="card">
+      <h2>📚 الكتب المضافة</h2>
+      <div id="list">جاري التحميل...</div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+
+/* ====== ضعي نفس إعدادات Firebase الموجودة في index.html ====== */
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "000000000000",
+  appId: "YOUR_APP_ID"
+};
+/* ============================================================ */
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app), db = getFirestore(app), storage = getStorage(app);
+const $ = id => document.getElementById(id);
+const NAMES = {stories:"القصص والروايات",science:"المراجع العلمية",edu:"المصادر التعليمية",culture:"الثقافة العامة"};
+
+$("loginBtn").onclick = async () => {
+  $("loginMsg").textContent = "";
+  try{ await signInWithEmailAndPassword(auth, $("email").value.trim(), $("pass").value); }
+  catch(e){ $("loginMsg").textContent = "البريد أو كلمة المرور غير صحيحة"; }
+};
+$("logout").onclick = () => signOut(auth);
+
+onAuthStateChanged(auth, user => {
+  $("loginBox").classList.toggle("hide", !!user);
+  $("panel").classList.toggle("hide", !user);
+  if(user) loadList();
+});
+
+function driveLinks(url){
+  const m = url.match(/drive\.google\.com\/file\/d\/([^/]+)/) || url.match(/[?&]id=([^&]+)/);
+  if(m) return { view:`https://drive.google.com/file/d/${m[1]}/preview`, dl:`https://drive.google.com/uc?export=download&id=${m[1]}` };
+  return { view:url, dl:url };
+}
+const say = (t, ok) => { $("msg").textContent = t; $("msg").className = "msg " + (ok?"ok":"err"); };
+
+$("addBtn").onclick = async () => {
+  const title = $("title").value.trim(), author = $("author").value.trim(), section = $("section").value;
+  const file = $("file").files[0], link = $("link").value.trim();
+  if(!title) return say("اكتبي عنوان الكتاب");
+  if(!file && !link) return say("اختاري ملف PDF أو ضعي رابطاً");
+  $("addBtn").disabled = true; say("جاري الرفع...", true);
+  try{
+    let data = { title, author, section, createdAt: serverTimestamp() };
+    if(file){
+      const path = `books/${Date.now()}_${file.name}`;
+      const task = uploadBytesResumable(ref(storage, path), file);
+      $("bar").style.display = "block";
+      await new Promise((res, rej) => task.on("state_changed",
+        s => $("barI").style.width = (s.bytesTransferred/s.totalBytes*100)+"%", rej, res));
+      const url = await getDownloadURL(task.snapshot.ref);
+      data = { ...data, viewUrl:url, downloadUrl:url, storagePath:path };
+    }else{
+      const l = driveLinks(link);
+      data = { ...data, viewUrl:l.view, downloadUrl:l.dl };
+    }
+    await addDoc(collection(db,"books"), data);
+    say("✅ تمت إضافة الكتاب بنجاح", true);
+    ["title","author","file","link"].forEach(i => $(i).value = "");
+    $("bar").style.display = "none"; $("barI").style.width = "0";
+    loadList();
+  }catch(e){ console.error(e); say("حدث خطأ: " + (e.code || e.message)); }
+  $("addBtn").disabled = false;
+};
+
+async function loadList(){
+  const snap = await getDocs(query(collection(db,"books"), orderBy("createdAt","desc")));
+  if(snap.empty){ $("list").textContent = "لا توجد كتب بعد."; return; }
+  $("list").innerHTML = "";
+  snap.forEach(d => {
+    const b = d.data(), row = document.createElement("div"); row.className = "row";
+    row.innerHTML = `<div><b></b><small></small></div><button class="del">حذف</button>`;
+    row.querySelector("b").textContent = b.title;
+    row.querySelector("small").textContent = (NAMES[b.section]||"") + (b.author ? " — " + b.author : "");
+    row.querySelector(".del").onclick = async () => {
+      if(!confirm("هل تريدين حذف هذا الكتاب؟")) return;
+      try{ if(b.storagePath) await deleteObject(ref(storage, b.storagePath)); }catch(e){}
+      await deleteDoc(doc(db,"books",d.id)); loadList();
+    };
+    $("list").appendChild(row);
+  });
+}
+</script>
+</body>
+</html>
