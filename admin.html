@@ -15,7 +15,7 @@ input,select{width:100%;padding:12px 14px;border:2px solid var(--lav);border-rad
 .secondary{background:#eee5f4;color:var(--pd)}.danger{background:#fff0f0;color:var(--red);border:1px solid #f1b6b6}
 .msg{margin-top:12px;font-weight:700;text-align:center;overflow-wrap:anywhere}.ok{color:var(--green)}.err{color:var(--red)}
 .muted,.filemeta{color:#806d8d;font-size:13px;line-height:1.7;margin-top:6px}.or{text-align:center;margin:12px 0;opacity:.65}
-.row{display:flex;align-items:center;gap:10px;padding:12px;border-radius:14px;background:var(--lav);margin:10px 0}.info{flex:1;min-width:0}.row small{opacity:.75;display:block;overflow-wrap:anywhere}
+.thumb{width:54px;height:70px;object-fit:cover;border-radius:8px;background:var(--lav);border:1px solid #eee;flex:none}.row{display:flex;align-items:center;gap:10px;padding:12px;border-radius:14px;background:var(--lav);margin:10px 0}.info{flex:1;min-width:0}.row small{opacity:.75;display:block;overflow-wrap:anywhere}
 .del{background:white;border:1px solid var(--pink);color:var(--red);border-radius:10px;padding:7px 12px;font:inherit;cursor:pointer;font-weight:700}
 .bar{height:12px;background:var(--lav);border-radius:10px;overflow:hidden;margin-top:14px;display:none}.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--p),var(--pink));transition:width .15s}
 .top{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px}.out{background:none;border:0;color:var(--pd);cursor:pointer;font:inherit;text-decoration:underline}
@@ -39,6 +39,10 @@ input,select{width:100%;padding:12px 14px;border:2px solid var(--lav);border-rad
 <label for="provider">طريقة تخزين PDF</label><select id="provider"><option value="cloudinary">Cloudinary (خطة Firebase Spark)</option><option value="firebase" id="firebaseOption" disabled>Firebase Storage (يتطلب Blaze)</option></select>
 <div class="muted" id="providerHelp">يرفع PDF إلى Cloudinary ثم يحفظ بيانات الكتاب ورابطه في Firestore.</div>
 <label for="file">ملف الكتاب (PDF)</label><input id="file" type="file" accept=".pdf,application/pdf"><div class="filemeta" id="fileMeta">اختر ملف PDF من جهازك.</div>
+<label for="coverFile">صورة غلاف الكتاب (اختياري)</label>
+<input id="coverFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif">
+<div class="filemeta" id="coverMeta">اختر صورة JPG أو PNG أو WebP أو GIF، ويفضل أن تكون عمودية.</div>
+<img id="coverPreview" class="hide" alt="معاينة غلاف الكتاب" style="display:block;max-width:120px;max-height:160px;object-fit:contain;margin-top:10px;border-radius:10px">
 <div class="or">— أو —</div><label for="link">رابط PDF خارجي (مثل Google Drive)</label><input id="link" type="url" dir="ltr" placeholder="https://drive.google.com/file/d/...">
 <div class="bar" id="bar"><i id="barI"></i></div><div class="msg" id="uploadInfo" aria-live="polite"></div>
 <div class="controls hide" id="uploadControls"><button type="button" class="btn danger" id="cancelBtn">إلغاء الرفع</button><button type="button" class="btn secondary hide" id="retryBtn">إعادة المحاولة</button></div>
@@ -75,7 +79,7 @@ const MAX_CLOUDINARY_FILE_BYTES=95*1024*1024;
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),storage=getStorage(app);
 const $=id=>document.getElementById(id);
 const NAMES={stories:"القصص والروايات",science:"المراجع العلمية",edu:"المصادر التعليمية",culture:"الثقافة العامة"};
-let activeXhr=null,activeFirebaseTask=null,pendingAsset=null;
+let activeXhr=null,activeFirebaseTask=null,pendingAsset=null,pendingCoverUrl="";
 const formatMB=n=>(n/1048576).toFixed(2)+" MB";
 const say=(t,ok=false)=>{$("msg").textContent=t;$("msg").className="msg "+(ok?"ok":"err")};
 const uploadSay=t=>$("uploadInfo").textContent=t;
@@ -90,6 +94,7 @@ $("logout").onclick=()=>signOut(auth);
 onAuthStateChanged(auth,user=>{$("loginBox").classList.toggle("hide",!!user);$("panel").classList.toggle("hide",!user);if(user)loadList()});
 $("provider").onchange=()=>{$("providerHelp").textContent=$("provider").value==="cloudinary"?"يرفع PDF إلى Cloudinary ثم يحفظ بيانات الكتاب ورابطه في Firestore.":"Firebase Storage يدعم الإيقاف والاستكمال، ويتطلب Blaze وقواعد Storage صحيحة."};
 $("file").onchange=()=>{pendingAsset=null;const f=$("file").files[0];$("fileMeta").textContent=f?`${f.name} — ${formatMB(f.size)}`:"اختر ملف PDF من جهازك.";if(f)$("link").value=""};
+$("coverFile").onchange=()=>{pendingCoverUrl="";const f=$("coverFile").files[0],img=$("coverPreview");$("coverMeta").textContent=f?`${f.name} — ${formatMB(f.size)}`:"اختر صورة JPG أو PNG أو WebP أو GIF.";if(f){img.src=URL.createObjectURL(f);img.classList.remove("hide")}else{img.removeAttribute("src");img.classList.add("hide")}};
 $("link").oninput=()=>{if($("link").value.trim()){$("file").value="";pendingAsset=null}};
 function driveLinks(url){const m=url.match(/drive\.google\.com\/file\/d\/([^/]+)/)||url.match(/[?&]id=([^&]+)/);return m?{view:`https://drive.google.com/file/d/${m[1]}/preview`,dl:`https://drive.google.com/uc?export=download&id=${m[1]}`}:{view:url,dl:url}}
 function validatePdf(f){if(!f)return"اختر ملف PDF.";if(!f.name.toLowerCase().endsWith(".pdf"))return"امتداد الملف يجب أن يكون PDF.";if(f.type&&f.type!=="application/pdf")return"الملف المحدد ليس PDF حسب نوعه.";if(!f.size)return"الملف فارغ.";return""}
@@ -110,6 +115,21 @@ function uploadCloudinary(file){return new Promise((resolve,reject)=>{
  xhr.onerror=()=>{activeXhr=null;reject(new Error("تعذر الاتصال بـ Cloudinary. تحقق من الإنترنت ومن Cloud Name واسم Upload Preset."))};
  xhr.onabort=()=>{activeXhr=null;reject(new Error("تم إلغاء الرفع."))};xhr.send(form);
 })}
+function uploadCoverCloudinary(file){return new Promise((resolve,reject)=>{
+ const allowed=["image/jpeg","image/png","image/webp","image/gif"];
+ if(!allowed.includes(file.type))return reject(new Error("صيغة صورة الغلاف غير مدعومة. استخدم JPG أو PNG أو WebP أو GIF."));
+ if(file.size>10*1024*1024)return reject(new Error("حجم صورة الغلاف يجب ألا يتجاوز 10MB."));
+ const xhr=new XMLHttpRequest(),form=new FormData();activeXhr=xhr;
+ const base=safeName(file.name.replace(/\\.(jpe?g|png|webp|gif)$/i,""));
+ form.append("file",file);form.append("upload_preset",CLOUDINARY_UPLOAD_PRESET);
+ form.append("public_id",`${Date.now()}_${Math.random().toString(36).slice(2,8)}_${base}`);
+ form.append("folder","school-library/covers");
+ xhr.open("POST",`https://api.cloudinary.com/v1_1/${encodeURIComponent(CLOUDINARY_CLOUD_NAME)}/image/upload`);xhr.responseType="json";
+ xhr.upload.onprogress=e=>{if(e.lengthComputable){const p=Math.round(e.loaded/e.total*100);$("bar").style.display="block";$("barI").style.width=p+"%";uploadSay(`رفع صورة الغلاف: ${p}%`)}};
+ xhr.onload=()=>{activeXhr=null;const r=xhr.response||{};if(xhr.status>=200&&xhr.status<300&&r.secure_url)resolve(r.secure_url);else reject(new Error(r?.error?.message||xhr.getResponseHeader("X-Cld-Error")||`Cloudinary HTTP ${xhr.status}`))};
+ xhr.onerror=()=>{activeXhr=null;reject(new Error("تعذر رفع صورة الغلاف إلى Cloudinary."))};
+ xhr.onabort=()=>{activeXhr=null;reject(new Error("تم إلغاء رفع صورة الغلاف."))};xhr.send(form);
+})}
 function uploadFirebase(file){return new Promise((resolve,reject)=>{
  if(!ENABLE_FIREBASE_STORAGE){reject(new Error("Firebase Storage غير مفعل في هذه النسخة؛ يتطلب Blaze وتغيير ENABLE_FIREBASE_STORAGE إلى true."));return}
  const safe=file.name.replace(/[^\w.\-]/g,"_"),path=`books/${Date.now()}_${safe}`;
@@ -119,10 +139,11 @@ function uploadFirebase(file){return new Promise((resolve,reject)=>{
 })}
 $("cancelBtn").onclick=()=>{if(activeXhr)activeXhr.abort();if(activeFirebaseTask)activeFirebaseTask.cancel()};
 $("retryBtn").onclick=()=>{$("addBtn").click()};
-async function saveRecord(asset){
+async function saveRecord(asset,coverUrl){
  const title=$("title").value.trim(),author=$("author").value.trim(),section=$("section").value,link=$("link").value.trim();
  if(!title)throw new Error("أدخل عنوان الكتاب.");
  const data={title,author,section,createdAt:serverTimestamp()};
+  if(coverUrl)data.coverUrl=coverUrl;
  if(asset)Object.assign(data,asset);else if(link){const l=driveLinks(link);data.viewUrl=l.view;data.downloadUrl=l.dl;data.storageProvider="external"}else throw new Error("لا يوجد ملف أو رابط.");
  await addDoc(collection(db,"books"),data);
 }
@@ -158,7 +179,7 @@ async function loadList(){
    const small=document.createElement("small");small.textContent=(NAMES[b.section]||"قسم غير محدد")+(b.author?" — "+b.author:"")+(b.storageProvider?" — "+b.storageProvider:"");info.append(title,small);
    const open=document.createElement("a");open.href=b.viewUrl||b.downloadUrl||"#";open.target="_blank";open.rel="noopener noreferrer";open.textContent="فتح";open.className="pill";
    const del=document.createElement("button");del.className="del";del.textContent="حذف";del.onclick=async()=>{if(!confirm("هل تريد حذف سجل هذا الكتاب من المكتبة؟"))return;try{if(b.storageProvider==="firebase"&&b.storagePath)await deleteObject(ref(storage,b.storagePath));await deleteDoc(doc(db,"books",d.id));if(b.storageProvider==="cloudinary")alert("حُذف سجل الكتاب من Firestore فقط. احذف ملف Cloudinary من Media Library إذا أردت إزالته نهائياً.");await loadList()}catch(e){alert("تعذر الحذف: "+friendlyError(e))}};
-   row.append(info,open,del);$("list").appendChild(row)
+   row.append(thumb,info,open,del);$("list").appendChild(row)
   })
  }catch(e){console.error(e);$("list").textContent="تعذر تحميل الكتب: "+friendlyError(e)}
 }
