@@ -31,7 +31,7 @@ input,select{width:100%;padding:12px 14px;border:2px solid var(--lav);border-rad
 <label for="pass">كلمة المرور</label><input id="pass" type="password" dir="ltr" autocomplete="current-password">
 <button class="btn" id="loginBtn">دخول</button><div class="msg err" id="loginMsg" role="status"></div></div>
 <div id="panel" class="hide">
-<div class="card"><div class="top"><h2>➕ إضافة كتاب جديد</h2><button class="out" id="logout">تسجيل خروج</button></div>
+<div class="card"><div class="top"><h2 id="formHeading">➕ إضافة كتاب جديد</h2><button class="out" id="logout">تسجيل خروج</button></div>
 <label for="title">عنوان الكتاب</label><input id="title" maxlength="180">
 <label for="author">اسم المؤلف</label><input id="author" maxlength="140">
 <label for="section">القسم</label><select id="section">
@@ -49,13 +49,15 @@ input,select{width:100%;padding:12px 14px;border:2px solid var(--lav);border-rad
 <button class="btn" id="addBtn">رفع الكتاب وحفظه</button><div class="msg" id="msg" role="status"></div>
 <div class="notice">لا تضع API Secret في هذا الملف مطلقاً. يُستخدم Unsigned Upload Preset فقط.</div>
 </div>
-<div class="card"><h2>📚 الكتب المضافة</h2><div id="list">جاري التحميل...</div></div>
+<div class="card"><h2>📚 الكتب المضافة</h2>
+<div class="muted" id="booksCount">سيظهر هنا عدد الكتب بعد التحميل.</div>
+<div id="list">جاري التحميل...</div></div>
 </div></div>
 
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth,signInWithEmailAndPassword,onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {getFirestore,collection,addDoc,getDocs,deleteDoc,doc,query,orderBy,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {getFirestore,collection,addDoc,getDocs,deleteDoc,doc,query,orderBy,serverTimestamp,updateDoc} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {getStorage,ref,uploadBytesResumable,getDownloadURL,deleteObject} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig={
@@ -79,7 +81,7 @@ const MAX_CLOUDINARY_FILE_BYTES=95*1024*1024;
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),storage=getStorage(app);
 const $=id=>document.getElementById(id);
 const NAMES={stories:"القصص والروايات",science:"المراجع العلمية",edu:"المصادر التعليمية",culture:"الثقافة العامة"};
-let activeXhr=null,activeFirebaseTask=null,pendingAsset=null,pendingCoverUrl="";
+let activeXhr=null,activeFirebaseTask=null,pendingAsset=null,pendingCoverUrl="",editingBookId=null;
 const formatMB=n=>(n/1048576).toFixed(2)+" MB";
 const say=(t,ok=false)=>{$("msg").textContent=t;$("msg").className="msg "+(ok?"ok":"err")};
 const uploadSay=t=>$("uploadInfo").textContent=t;
@@ -147,22 +149,46 @@ async function saveRecord(asset,coverUrl){
  if(asset)Object.assign(data,asset);else if(link){const l=driveLinks(link);data.viewUrl=l.view;data.downloadUrl=l.dl;data.storageProvider="external"}else throw new Error("لا يوجد ملف أو رابط.");
  await addDoc(collection(db,"books"),data);
 }
+function resetBookForm(){
+ editingBookId=null;pendingAsset=null;pendingCoverUrl="";$("cancelEditBtn")?.remove();$("formHeading").textContent="➕ إضافة كتاب جديد";
+ $("title").value="";$("author").value="";$("section").value="stories";
+ $("file").value="";$("link").value="";$("link").placeholder="https://drive.google.com/file/d/...";$("coverFile").value="";
+ $("fileMeta").textContent="اختر ملف PDF من جهازك.";
+ $("coverMeta").textContent="اختر صورة JPG أو PNG أو WebP أو GIF، ويفضل أن تكون عمودية.";
+ $("coverPreview").removeAttribute("src");$("coverPreview").classList.add("hide");
+ $("addBtn").textContent="رفع الكتاب وحفظه";$("msg").textContent="";
+ $("uploadInfo").textContent="";resetBar();$("uploadControls").classList.add("hide");
+}
+async function uploadSelectedCover(){
+ const f=$("coverFile").files[0];
+ if(f)return await uploadCoverCloudinary(f);
+ return pendingCoverUrl||"";
+}
 $("addBtn").onclick=async()=>{
  if(!auth.currentUser)return say("سجل الدخول أولاً.");
  const file=$("file").files[0],link=$("link").value.trim();
  if(!$("title").value.trim())return say("أدخل عنوان الكتاب.");
- if(!file&&!link&&!pendingAsset)return say("اختر PDF أو أدخل رابطاً.");
+ if(!editingBookId&&!file&&!link&&!pendingAsset)return say("اختر PDF أو أدخل رابطاً.");
  if(file){const err=validatePdf(file);if(err)return say(err)}
  $("addBtn").disabled=true;$("retryBtn").classList.add("hide");$("uploadControls").classList.remove("hide");say("");
  try{
-  let asset=pendingAsset;
+  let asset=pendingAsset, coverUrl=await uploadSelectedCover();
   if(file&&!asset){uploadSay("بدء رفع الملف...");asset=$("provider").value==="firebase"?await uploadFirebase(file):await uploadCloudinary(file);pendingAsset=asset}
-  await saveRecord(asset);pendingAsset=null;say("✅ تم رفع الكتاب وحفظ بياناته بنجاح.",true);uploadSay("اكتملت العملية.");
-  $("title").value="";$("author").value="";$("file").value="";$("link").value="";$("fileMeta").textContent="اختر ملف PDF من جهازك.";
-  resetBar();$("uploadControls").classList.add("hide");await loadList();
+  if(editingBookId){
+   const changes={title:$("title").value.trim(),author:$("author").value.trim(),section:$("section").value,updatedAt:serverTimestamp()};
+   if(coverUrl)changes.coverUrl=coverUrl;
+   if(asset)Object.assign(changes,asset);
+   else if(link){const l=driveLinks(link);changes.viewUrl=l.view;changes.downloadUrl=l.dl;changes.storageProvider="external"}
+   await updateDoc(doc(db,"books",editingBookId),changes);
+   say("✅ تم تحديث بيانات الكتاب بنجاح.",true);
+  }else{
+   await saveRecord(asset,coverUrl);
+   say("✅ تم رفع الكتاب وحفظ بياناته بنجاح.",true);
+  }
+  uploadSay("اكتملت العملية.");resetBookForm();await loadList();
  }catch(e){
   console.error(e);say("تعذر إكمال العملية: "+friendlyError(e));
-  if(pendingAsset){uploadSay("تم رفع الملف لكن تعذر حفظ بياناته في Firestore. اضغط الزر مرة أخرى لحفظ البيانات دون إعادة الرفع.")}
+  if(pendingAsset)uploadSay("تم رفع الملف لكن تعذر حفظ بياناته في Firestore. اضغط الزر مرة أخرى لحفظ البيانات دون إعادة الرفع.");
   else{resetBar();uploadSay("");if(file)$("retryBtn").classList.remove("hide")}
  }
  finally{$("addBtn").disabled=false;activeXhr=null;activeFirebaseTask=null}
@@ -170,16 +196,39 @@ $("addBtn").onclick=async()=>{
 async function loadList(){
  $("list").textContent="جاري تحميل الكتب...";
  try{
-  const snap=await getDocs(query(collection(db,"books"),orderBy("createdAt","desc")));
+  let snap;
+  try{snap=await getDocs(query(collection(db,"books"),orderBy("createdAt","desc")))}
+  catch(orderErr){console.warn("تعذر الترتيب حسب createdAt، سيتم جلب السجلات دون ترتيب",orderErr);snap=await getDocs(collection(db,"books"))}
+  $("booksCount").textContent=`إجمالي الكتب المضافة: ${snap.size}`;
   if(snap.empty){$("list").textContent="لا توجد كتب بعد.";return}
   $("list").innerHTML="";
   snap.forEach(d=>{
    const b=d.data(),row=document.createElement("div");row.className="row";
+   const thumb=document.createElement("img");thumb.className="thumb";thumb.alt="غلاف الكتاب";
+   thumb.src=b.coverUrl||"data:image/svg+xml;charset=UTF-8,"+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="130"><rect width="100%" height="100%" fill="#eee5f4"/><text x="50%" y="52%" text-anchor="middle" font-size="36">📚</text></svg>');
+   thumb.onerror=()=>{thumb.onerror=null;thumb.src="data:image/svg+xml;charset=UTF-8,"+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="130"><rect width="100%" height="100%" fill="#eee5f4"/><text x="50%" y="52%" text-anchor="middle" font-size="36">📚</text></svg>')};
    const info=document.createElement("div");info.className="info";const title=document.createElement("b");title.textContent=b.title||"كتاب بلا عنوان";
    const small=document.createElement("small");small.textContent=(NAMES[b.section]||"قسم غير محدد")+(b.author?" — "+b.author:"")+(b.storageProvider?" — "+b.storageProvider:"");info.append(title,small);
    const open=document.createElement("a");open.href=b.viewUrl||b.downloadUrl||"#";open.target="_blank";open.rel="noopener noreferrer";open.textContent="فتح";open.className="pill";
-   const del=document.createElement("button");del.className="del";del.textContent="حذف";del.onclick=async()=>{if(!confirm("هل تريد حذف سجل هذا الكتاب من المكتبة؟"))return;try{if(b.storageProvider==="firebase"&&b.storagePath)await deleteObject(ref(storage,b.storagePath));await deleteDoc(doc(db,"books",d.id));if(b.storageProvider==="cloudinary")alert("حُذف سجل الكتاب من Firestore فقط. احذف ملف Cloudinary من Media Library إذا أردت إزالته نهائياً.");await loadList()}catch(e){alert("تعذر الحذف: "+friendlyError(e))}};
-   row.append(thumb,info,open,del);$("list").appendChild(row)
+   const edit=document.createElement("button");edit.className="del";edit.style.color="var(--pd)";edit.textContent="تعديل";
+   edit.onclick=()=>{
+    editingBookId=d.id;pendingAsset=null;pendingCoverUrl=b.coverUrl||"";$("formHeading").textContent="✏️ تعديل بيانات الكتاب";
+    $("title").value=b.title||"";$("author").value=b.author||"";$("section").value=b.section||"stories";
+    $("file").value="";$("link").value="";
+    $("link").placeholder="اتركه فارغاً للاحتفاظ بملف PDF الحالي، أو أدخل رابطاً جديداً.";
+    $("fileMeta").textContent="اترك ملف PDF ورابط PDF فارغين للاحتفاظ بالملف الحالي، أو اختر ملفاً جديداً لاستبداله.";
+    $("coverFile").value="";$("coverMeta").textContent=b.coverUrl?"الغلاف الحالي محفوظ. اختر صورة جديدة لاستبداله.":"لا يوجد غلاف حالياً.";
+    if(b.coverUrl){$("coverPreview").src=b.coverUrl;$("coverPreview").classList.remove("hide")}else{$("coverPreview").classList.add("hide")}
+    $("addBtn").textContent="حفظ التعديلات";$("msg").textContent="أنت الآن تعدّل: "+(b.title||"كتاب بلا عنوان");
+    $("title").scrollIntoView({behavior:"smooth",block:"center"});
+    if(!$("cancelEditBtn")){const c=document.createElement("button");c.id="cancelEditBtn";c.type="button";c.className="btn secondary";c.textContent="إلغاء التعديل";c.onclick=()=>{c.remove();resetBookForm()};$("addBtn").after(c)}
+   };
+   const del=document.createElement("button");del.className="del";del.textContent="حذف";del.onclick=async()=>{
+    if(!confirm("هل تريد حذف سجل هذا الكتاب من المكتبة؟"))return;
+    try{if(b.storageProvider==="firebase"&&b.storagePath)await deleteObject(ref(storage,b.storagePath));await deleteDoc(doc(db,"books",d.id));await loadList();if(editingBookId===d.id)resetBookForm()}
+    catch(e){alert("تعذر الحذف: "+friendlyError(e))}
+   };
+   row.append(thumb,info,open,edit,del);$("list").appendChild(row)
   })
  }catch(e){console.error(e);$("list").textContent="تعذر تحميل الكتب: "+friendlyError(e)}
 }
